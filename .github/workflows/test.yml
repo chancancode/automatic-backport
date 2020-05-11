@@ -1,23 +1,90 @@
 name: "build-test"
-on: # rebuild any PRs and main branch changes
-  pull_request:
+on:
   push:
     branches:
-      - master
-      - 'releases/*'
+      - test
 
 jobs:
-  build: # make sure build/ci work properly
+  build:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v1
     - run: |
         yarn install
         yarn run all
-  test: # make sure the action works on a clean machine without building
+
+  tests-args:
+    name: Tests (Arguments Parsing)
     runs-on: ubuntu-latest
+    env:
+      ASSERT_STRING: diff --color -U999 <(echo "$EXPECTED") <(echo "$ACTUAL")
+      ASSERT_JSON: diff --color -U999 <(echo "$EXPECTED" | jq .) <(echo "$ACTUAL" | jq .)
+
     steps:
     - uses: actions/checkout@v1
-    - uses: ./
+
+    - id: defaults
+      name: Default arguments
+      uses: ./
+    - name: Value for `before`
+      run: eval $ASSERT_STRING
+      env:
+        EXPECTED: ${{ github.event.before }}
+        ACTUAL:   ${{ steps.defaults.outputs.before }}
+    - name: Value for `after`
+      run: eval $ASSERT_STRING
+      env:
+        EXPECTED: ${{ github.event.after }}
+        ACTUAL:   ${{ steps.defaults.outputs.after }}
+    - name: Value for `tags`
+      run: eval $ASSERT_JSON
+      env:
+        EXPECTED: "{}"
+        ACTUAL:   ${{ steps.defaults.outputs.tags }}
+
+    - id: before
+      name: Passing `before`
+      uses: ./
       with:
-        milliseconds: 1000
+        before: HEAD~
+    - name: Value for `before`
+      run: eval $ASSERT_STRING
+      env:
+        EXPECTED: HEAD~
+        ACTUAL:   ${{ steps.before.outputs.before }}
+
+    - id: after
+      name: Passing `after`
+      uses: ./
+      with:
+        after: HEAD
+    - name: Value for `after`
+      run: eval $ASSERT_STRING
+      env:
+        EXPECTED: HEAD
+        ACTUAL:   ${{ steps.after.outputs.after }}
+
+    - id: tags
+      name: Passing `tags`
+      uses: ./
+      with:
+        tags: |
+          "[BUGFIX beta]":    [beta]
+          "[BUGFIX release]": [beta, release]
+          "[BUGFIX lts]":     [beta, release, lts-3-16, lts-3-12]
+          "[DOC beta]":       [beta]
+          "[DOC release]":    [beta, release]
+          "[DOC lts]":        [beta, release, lts-3-16, lts-3-12]
+    - name: Value for `tags`
+      run: eval $ASSERT_JSON
+      env:
+        EXPECTED: |
+          {
+            "[BUGFIX beta]":    ["beta"],
+            "[BUGFIX release]": ["beta", "release"],
+            "[BUGFIX lts]":     ["beta", "release", "lts-3-16", "lts-3-12"],
+            "[DOC beta]":       ["beta"],
+            "[DOC release]":    ["beta", "release"],
+            "[DOC lts]":        ["beta", "release", "lts-3-16", "lts-3-12"]
+          }
+        ACTUAL: ${{ steps.tags.outputs.tags }}

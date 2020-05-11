@@ -1,10 +1,18 @@
-name: 'Your name here'
-description: 'Provide a description here'
-author: 'Your name or organization here'
+name: Automatic Backport
+description: Automatically backport commits based on commit tags or pull request labels
+author: Ember.js
 inputs:
-  myInput:              # change this
-    description: 'input description here'
-    default: 'default value if applicable'
+  before:
+    description: The SHA or ref of the most recent commit before the push.
+    required: true
+    default: ${{ github.event.before }}
+  after:
+    description: The SHA or ref of the most recent commit after the push.
+    required: true
+    default: ${{ github.event.after }}
+  tags:
+    description: A mapping of commit tags to branch names
+    required: false
 runs:
   using: 'node12'
   main: 'dist/index.js'

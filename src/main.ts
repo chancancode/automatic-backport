@@ -1,16 +1,27 @@
 import * as core from '@actions/core'
-import {wait} from './wait'
+import Mapping from './mapping'
+
+function required(key: string): string {
+  return core.getInput(key, {required: true})
+}
+
+function optional(key: string, fallback = ''): string {
+  return core.getInput(key) || fallback
+}
 
 async function run(): Promise<void> {
   try {
-    const ms: string = core.getInput('milliseconds')
-    core.debug(`Waiting ${ms} milliseconds ...`)
+    const before = required('before')
+    core.debug(`before: ${before}`)
+    core.setOutput('before', before)
 
-    core.debug(new Date().toTimeString())
-    await wait(parseInt(ms, 10))
-    core.debug(new Date().toTimeString())
+    const after = required('after')
+    core.debug(`after: ${after}`)
+    core.setOutput('after', after)
 
-    core.setOutput('time', new Date().toTimeString())
+    const tags = Mapping.fromYAML(optional('tags', '{}'))
+    core.debug(`tags: ${JSON.stringify(tags, null, 2)}`)
+    core.setOutput('tags', tags)
   } catch (error) {
     core.setFailed(error.message)
   }
