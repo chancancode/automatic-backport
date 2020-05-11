@@ -9,9 +9,9 @@
     "format": "prettier --write **/*.ts",
     "format-check": "prettier --check **/*.ts",
     "lint": "eslint src/**/*.ts",
-    "pack": "ncc build",
+    "prepack": "ncc build",
     "test": "jest",
-    "all": "npm run build && npm run format && npm run lint && npm run pack && npm test"
+    "all": "yarn build && yarn format && yarn lint && yarn pack && yarn test"
   },
   "repository": {
     "type": "git",
@@ -41,5 +41,9 @@
     "prettier": "^1.19.1",
     "ts-jest": "^24.2.0",
     "typescript": "^3.6.4"
+  },
+  "volta": {
+    "node": "12.16.3",
+    "yarn": "1.22.4"
   }
 }
