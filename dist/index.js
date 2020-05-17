@@ -901,6 +901,13 @@ exports.PlainValue = PlainValue;
 
 /***/ }),
 
+/***/ 129:
+/***/ (function(module) {
+
+module.exports = require("child_process");
+
+/***/ }),
+
 /***/ 156:
 /***/ (function(__unusedmodule, exports) {
 
@@ -1171,15 +1178,17 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 const core = __importStar(__webpack_require__(470));
+const assert_1 = __importDefault(__webpack_require__(533));
 const debug_1 = __importDefault(__webpack_require__(270));
 const mapping_1 = __importDefault(__webpack_require__(433));
+const git_1 = __webpack_require__(453);
 function required(key) {
     return core.getInput(key, { required: true });
 }
 function optional(key, fallback = '') {
     return core.getInput(key) || fallback;
 }
-async function run() {
+async function main() {
     try {
         const before = required('before');
         debug_1.default(`before: ${before}`);
@@ -1190,12 +1199,30 @@ async function run() {
         const tags = mapping_1.default.fromYAML(optional('tags', '{}'));
         debug_1.default(`tags: ${JSON.stringify(tags, null, 2)}`);
         core.setOutput('tags', tags);
+        assert_1.default(await git_1.Repository.isRoot(), 'Not running inside the root of a Git repository. ' +
+            'Did you forget to run actions/checkout first?');
+        const repo = await git_1.Repository.import();
+        assert_1.default(await repo.hasRemote('origin'), 'This Git repository does not have a remote `origin`. ' +
+            'Did you forget to run actions/checkout first?');
+        await repo.fetch('origin');
+        for (const [tag, branches] of tags) {
+            for (const branch of branches) {
+                if (!repo.hasBranch(branch)) {
+                    assert_1.default(await repo.hasBranch(branch, 'origin'), `This Git repository does not have a branch \`${branch}\`, ` +
+                        `which is the backport target for the ${JSON.stringify(tag)}.`);
+                    repo.createBranch(branch, `remotes/origin/${branch}`);
+                }
+            }
+        }
+        const commits = await repo.getCommitsInRange(before, after);
+        debug_1.default(`commits:\n${commits.map(c => c.oneline).join('\n')}`);
+        core.setOutput('commits', commits);
     }
     catch (error) {
         core.setFailed(error.message);
     }
 }
-run();
+main();
 
 
 /***/ }),
@@ -2790,6 +2817,269 @@ exports.default = Mapping;
 
 /***/ }),
 
+/***/ 453:
+/***/ (function(__unusedmodule, exports, __webpack_require__) {
+
+"use strict";
+
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+const path_1 = __webpack_require__(622);
+const fs_1 = __webpack_require__(747);
+const util_1 = __webpack_require__(669);
+const debug_1 = __importDefault(__webpack_require__(270));
+const run_1 = __importDefault(__webpack_require__(861));
+const assert_1 = __importDefault(__webpack_require__(533));
+const readFile = util_1.promisify(fs_1.readFile);
+const writeFile = util_1.promisify(fs_1.writeFile);
+class Repository {
+    constructor(root) {
+        this.root = path_1.resolve(root);
+    }
+    static async isRoot(dir = process.cwd()) {
+        debug_1.default(`checking if ${dir} is a git root`);
+        try {
+            const repo = new Repository(dir);
+            const root = await repo.revParse('--show-toplevel');
+            return root === path_1.resolve(dir);
+        }
+        catch {
+            return false;
+        }
+    }
+    static async init(root = process.cwd()) {
+        debug_1.default(`initializing ${root} as a git root`);
+        const repo = new Repository(root);
+        await repo.git('init').success();
+        return repo;
+    }
+    static async import(root = process.cwd()) {
+        debug_1.default(`importing repository from ${root}`);
+        assert_1.default(await this.isRoot(root), `${root} is not the root of a Git repository`);
+        return new Repository(root);
+    }
+    static async clone(origin, root = process.cwd()) {
+        debug_1.default(`cloning ${origin} into ${root}`);
+        const repo = new Repository(root);
+        if (typeof origin === 'string') {
+            await repo.git('clone', origin, '.').success();
+        }
+        else {
+            await repo.git('clone', origin.root, '.').success();
+        }
+        return repo;
+    }
+    git(...args) {
+        const options = { cwd: this.root };
+        return run_1.default('git', ...args, options /* hack */);
+    }
+    async addRemote(name, remote) {
+        await this.git('remote', 'add', name, remote).success();
+    }
+    async removeRemote(name) {
+        await this.git('remote', 'rm', name).success();
+    }
+    async hasRemote(remote) {
+        debug_1.default(`checking if ${remote} is a valid git remote`);
+        const result = await this.git('remote', 'show', remote).result();
+        return result.isSuccess();
+    }
+    async hasBranch(name, remote) {
+        try {
+            if (remote) {
+                debug_1.default(`checking if remote branch ${name} exists`);
+                await this.revParse(`refs/remotes/${remote}/${name}`, '--verify');
+            }
+            else {
+                debug_1.default(`checking if local branch ${name} exists`);
+                await this.revParse(`refs/heads/${name}`, '--verify');
+            }
+            return true;
+        }
+        catch {
+            return false;
+        }
+    }
+    async getBranches(pattern, remote) {
+        const args = ['--list'];
+        if (remote) {
+            args.push('--all');
+        }
+        if (pattern && remote) {
+            debug_1.default(`getting remote branches from ${remote} matching ${pattern}`);
+            args.push(`${remote}/${pattern}`);
+        }
+        else if (remote) {
+            debug_1.default(`getting remote branches from ${remote}`);
+            args.push(`${remote}/*`);
+        }
+        else if (pattern) {
+            debug_1.default(`getting local branches matching ${pattern}`);
+            args.push(pattern);
+        }
+        else {
+            debug_1.default('getting local branches');
+        }
+        const result = await this.git('branch', ...args).success();
+        const prefix = remote ? `  remotes/${remote}/` : `  `;
+        return result.stdout
+            .split('\n')
+            .filter(b => b.trim() !== '')
+            .map(b => b.slice(prefix.length));
+    }
+    async getCurrentBranch() {
+        debug_1.default('getting current branch name');
+        const result = await this.git('symbolic-ref', '--short', 'HEAD').success();
+        return result.stdout.trim();
+    }
+    async createBranch(name, ref, ...options) {
+        if (ref) {
+            debug_1.default(`creating branch ${name} from ${ref}`);
+            await this.git('branch', ...options, name, ref).success();
+        }
+        else {
+            debug_1.default(`creating branch ${name}`);
+            await this.git('branch', ...options, name).success();
+        }
+    }
+    async checkout(name, ...options) {
+        debug_1.default(`checking out branch ${name}`);
+        await this.git('checkout', ...options, name).success();
+    }
+    async fetch(remote, ref, ...options) {
+        if (ref) {
+            debug_1.default(`fetching remote ${remote} ${ref}`);
+            await this.git('fetch', ...options, remote, ref).success();
+        }
+        else {
+            debug_1.default(`fetching remote ${remote}`);
+            await this.git('fetch', ...options, remote).success();
+        }
+    }
+    async revParse(rev, ...options) {
+        debug_1.default(`rev-parse ${rev}`);
+        const parsed = await this.git('rev-parse', ...options, rev).success();
+        return parsed.stdout.trim();
+    }
+    async getCommit(sha) {
+        debug_1.default(`getting single commit ${sha}`);
+        sha = await this.revParse(sha);
+        const { stdout } = await this.git('log', sha, '--format=%B', '--max-count=1').success();
+        return new Commit(this, sha, stdout.trim());
+    }
+    async getCommitsInRange(before, after) {
+        debug_1.default(`getting commits in range ${before}..${after}`);
+        const { stdout } = await this.git('log', '--format=%H', `${before}..${after}`).success();
+        const shas = stdout.trim().split('\n');
+        debug_1.default(`found shas ${shas.join(', ')}`);
+        const commits = await Promise.all(shas.map(async (sha) => this.getCommit(sha)));
+        return commits.reverse();
+    }
+    async readFile(path, ref) {
+        if (ref) {
+            debug_1.default(`reading ${path} from ${ref}`);
+            const result = await this.git('show', `${ref}:${path}`).success();
+            return result.stdout;
+        }
+        else {
+            debug_1.default(`reading ${path} from work tree`);
+            return readFile(path_1.resolve(this.root, path), { encoding: 'utf8' });
+        }
+    }
+    async writeFile(path, content, add = false) {
+        debug_1.default(`writing ${path} to work tree`);
+        await writeFile(path_1.resolve(this.root, path), content);
+        if (add) {
+            await this.add(path);
+        }
+    }
+    async add(path) {
+        debug_1.default(`adding ${path}`);
+        await this.git('add', path).success();
+    }
+    async commit(message, ...options) {
+        debug_1.default('commiting');
+        if (message) {
+            await this.git('commit', ...options, '-m', message).success();
+        }
+        else {
+            await this.git('commit', ...options).success();
+        }
+        return this.getCommit('HEAD');
+    }
+    async cherryPick(commit, conflict = 'throw', empty = 'throw') {
+        debug_1.default(`cherry-pick ${commit} on to ${await this.getCurrentBranch()}`);
+        try {
+            const result = await this.git('cherry-pick', '-x', commit).result();
+            if (result.isSuccess()) {
+                return 'clean';
+            }
+            else if (result.stderr.includes('error: could not apply')) {
+                debug_1.default(`conflicts\n${(await this.git('diff').result()).stdout}`);
+                if (conflict === 'commit') {
+                    await this.commit(null, '--all', '--no-edit');
+                }
+                else if (conflict === 'throw') {
+                    throw result.error;
+                }
+                return 'conflict';
+            }
+            else if (result.stderr.includes('cherry-pick is now empty')) {
+                if (empty === 'commit') {
+                    await this.commit(null, '--allow-empty', '--no-edit');
+                }
+                else if (empty === 'throw') {
+                    throw result.error;
+                }
+                return 'empty';
+            }
+            else {
+                throw result.error;
+            }
+        }
+        finally {
+            await this.git('cherry-pick', '--abort').result();
+        }
+    }
+    async push(remote, branch, ...options) {
+        if (branch) {
+            debug_1.default(`pushing ${await this.getCurrentBranch()} to ${remote} ${branch}`);
+            await this.git('push', ...options, remote, branch).success();
+        }
+        else {
+            debug_1.default(`pushing ${await this.getCurrentBranch()} to ${remote}`);
+            await this.git('push', ...options, remote).success();
+        }
+    }
+}
+exports.Repository = Repository;
+class Commit {
+    constructor(repo, sha, message) {
+        this.repo = repo;
+        this.sha = sha;
+        this.message = message;
+    }
+    get shortSha() {
+        return this.sha.slice(0, 7);
+    }
+    get title() {
+        const lines = this.message.split('\n');
+        return lines[0] || '';
+    }
+    get oneline() {
+        return `${this.shortSha} ${this.title}`;
+    }
+    toJSON() {
+        return this.sha;
+    }
+}
+exports.Commit = Commit;
+
+
+/***/ }),
+
 /***/ 454:
 /***/ (function(__unusedmodule, exports, __webpack_require__) {
 
@@ -3582,6 +3872,22 @@ exports.Scalar = Scalar;
 /***/ (function(module, __unusedexports, __webpack_require__) {
 
 module.exports = __webpack_require__(792).YAML
+
+
+/***/ }),
+
+/***/ 533:
+/***/ (function(__unusedmodule, exports) {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", { value: true });
+function assert(condition, message) {
+    if (!condition) {
+        throw new Error(message || 'assertion failed');
+    }
+}
+exports.default = assert;
 
 
 /***/ }),
@@ -4787,6 +5093,13 @@ exports.Directive = Directive;
 
 /***/ }),
 
+/***/ 669:
+/***/ (function(module) {
+
+module.exports = require("util");
+
+/***/ }),
+
 /***/ 684:
 /***/ (function(__unusedmodule, exports, __webpack_require__) {
 
@@ -5275,6 +5588,13 @@ function resolveComments(collection, comments) {
     }
   }
 }
+
+/***/ }),
+
+/***/ 747:
+/***/ (function(module) {
+
+module.exports = require("fs");
 
 /***/ }),
 
@@ -6471,6 +6791,98 @@ function resolveFlowSeqItems(doc, cst) {
     items
   };
 }
+
+/***/ }),
+
+/***/ 861:
+/***/ (function(__unusedmodule, exports, __webpack_require__) {
+
+"use strict";
+
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+const child_process_1 = __webpack_require__(129);
+const debug_1 = __importDefault(__webpack_require__(270));
+class CommandResult {
+    constructor(command, args, options, error, stdout, stderr) {
+        this.command = command;
+        this.args = args;
+        this.options = options;
+        this.error = error;
+        this.stdout = stdout;
+        this.stderr = stderr;
+        debug_1.default(`Command \`${command} ${args.join(' ')}\` finished\n` +
+            `exitCode: ${this.exitCode}\n` +
+            `error: ${error === null || error === void 0 ? void 0 : error.message}\n` +
+            `stdout: ${stdout}\n` +
+            `stderr: ${stderr}`);
+    }
+    get exitCode() {
+        if (this.error === null) {
+            return 0;
+        }
+        else {
+            return this.error.code || null;
+        }
+    }
+    isSuccess() {
+        return this.error === null;
+    }
+    isError() {
+        return !this.isSuccess();
+    }
+    retry() {
+        const { command, args, options } = this;
+        debug_1.default(`Retrying command \`${command} ${args.join(' ')}\` in ${options.cwd}`);
+        return new Command(command, args, options);
+    }
+}
+exports.CommandResult = CommandResult;
+class Command {
+    constructor(command, args, options) {
+        this.command = command;
+        this.args = args;
+        this.options = options;
+        this.promise = new Promise(resolve => {
+            debug_1.default(`Running command \`${command} ${args.join(' ')}\` in ${options.cwd}`);
+            this.process = child_process_1.execFile(command, args, options, (...result) => {
+                resolve(new CommandResult(command, args, options, ...result));
+            });
+        });
+    }
+    get pid() {
+        return this.process.pid;
+    }
+    async result() {
+        return this.promise;
+    }
+    async success() {
+        const result = await this.promise;
+        if (result.isSuccess()) {
+            return result;
+        }
+        else {
+            debug_1.default('Command failed while `success()` is used, throwing');
+            throw result.error;
+        }
+    }
+}
+exports.Command = Command;
+function run(command, ...args) {
+    const options = {
+        cwd: process.cwd()
+    };
+    const last = args[args.length - 1];
+    if (typeof last !== 'string') {
+        args.pop();
+        options.cwd = last.cwd || options.cwd;
+    }
+    return new Command(command, args, options);
+}
+exports.default = run;
+
 
 /***/ }),
 

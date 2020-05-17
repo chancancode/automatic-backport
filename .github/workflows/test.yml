@@ -9,9 +9,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v1
-    - run: |
-        yarn install
-        yarn run all
+    - run: git fetch origin --tags
+    - run: git branch --track master origin/master
+    - run: yarn install
+    - run: yarn run all
 
   tests-args:
     name: Tests (Arguments Parsing)
