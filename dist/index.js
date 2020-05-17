@@ -1159,15 +1159,6 @@ exports.failsafe = failsafe;
 
 "use strict";
 
-var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
-    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
-    return new (P || (P = Promise))(function (resolve, reject) {
-        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
-        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
-        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
-        step((generator = generator.apply(thisArg, _arguments || [])).next());
-    });
-};
 var __importStar = (this && this.__importStar) || function (mod) {
     if (mod && mod.__esModule) return mod;
     var result = {};
@@ -1180,6 +1171,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 const core = __importStar(__webpack_require__(470));
+const debug_1 = __importDefault(__webpack_require__(270));
 const mapping_1 = __importDefault(__webpack_require__(433));
 function required(key) {
     return core.getInput(key, { required: true });
@@ -1187,23 +1179,21 @@ function required(key) {
 function optional(key, fallback = '') {
     return core.getInput(key) || fallback;
 }
-function run() {
-    return __awaiter(this, void 0, void 0, function* () {
-        try {
-            const before = required('before');
-            core.debug(`before: ${before}`);
-            core.setOutput('before', before);
-            const after = required('after');
-            core.debug(`after: ${after}`);
-            core.setOutput('after', after);
-            const tags = mapping_1.default.fromYAML(optional('tags', '{}'));
-            core.debug(`tags: ${JSON.stringify(tags, null, 2)}`);
-            core.setOutput('tags', tags);
-        }
-        catch (error) {
-            core.setFailed(error.message);
-        }
-    });
+async function run() {
+    try {
+        const before = required('before');
+        debug_1.default(`before: ${before}`);
+        core.setOutput('before', before);
+        const after = required('after');
+        debug_1.default(`after: ${after}`);
+        core.setOutput('after', after);
+        const tags = mapping_1.default.fromYAML(optional('tags', '{}'));
+        debug_1.default(`tags: ${JSON.stringify(tags, null, 2)}`);
+        core.setOutput('tags', tags);
+    }
+    catch (error) {
+        core.setFailed(error.message);
+    }
 }
 run();
 
@@ -1524,6 +1514,28 @@ _defineProperty(Schema, "defaultTags", {
   SEQ: 'tag:yaml.org,2002:seq',
   STR: 'tag:yaml.org,2002:str'
 });
+
+/***/ }),
+
+/***/ 270:
+/***/ (function(__unusedmodule, exports, __webpack_require__) {
+
+"use strict";
+
+var __importStar = (this && this.__importStar) || function (mod) {
+    if (mod && mod.__esModule) return mod;
+    var result = {};
+    if (mod != null) for (var k in mod) if (Object.hasOwnProperty.call(mod, k)) result[k] = mod[k];
+    result["default"] = mod;
+    return result;
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+const core = __importStar(__webpack_require__(470));
+function debug(message) {
+    core.isDebug() && core.debug(message);
+}
+exports.default = debug;
+
 
 /***/ }),
 
@@ -2741,7 +2753,7 @@ function describe(value) {
         try {
             return `an unknown value (${String(value)})`;
         }
-        catch (_a) {
+        catch {
             return `an unknown value`;
         }
     }
