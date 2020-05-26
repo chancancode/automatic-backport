@@ -1,5 +1,6 @@
 import * as core from '@actions/core'
 import assert from './assert'
+import Backport from './backport'
 import debug from './debug'
 import Mapping from './mapping'
 import {Repository} from './git'
@@ -59,6 +60,14 @@ async function main(): Promise<void> {
     const commits = await repo.getCommitsInRange(before, after)
     debug(`commits:\n${commits.map(c => c.oneline).join('\n')}`)
     core.setOutput('commits', commits)
+
+    const backport = new Backport(repo, commits, tags)
+    debug(`plan: ${JSON.stringify(backport.plan, null, 2)}`)
+    core.setOutput('plan', backport.plan)
+
+    const result = await backport.execute()
+    debug(`result: ${JSON.stringify(result, null, 2)}`)
+    core.setOutput('result', result)
   } catch (error) {
     core.setFailed(error.message)
   }
